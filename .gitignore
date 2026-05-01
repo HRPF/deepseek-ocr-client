@@ -48,3 +48,4 @@ dist/
 # Environment
 .env
 .env.local
+api_config.json

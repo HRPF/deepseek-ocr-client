@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Process -NoNewWindow -FilePath \"D:\\\\MyCode\\\\Github\\\\deepseek-ocr-client\\\\venv\\\\Scripts\\\\python.exe\" -ArgumentList \"backend/ocr_server.py\" -WorkingDirectory \"D:\\\\MyCode\\\\Github\\\\deepseek-ocr-client\"; Start-Sleep 3)",
+      "Bash(curl -s http://127.0.0.1:5000/health)",
+      "Bash(node -e \"require\\('fs'\\).readFileSync\\('renderer.js','utf8'\\); console.log\\('OK'\\)\")",
+      "Bash(\"venv/Scripts/python\" -m py_compile backend/ocr_server.py)",
+      "Bash(node -e \"require\\('fs'\\).readFileSync\\('renderer.js','utf8'\\); console.log\\('JS OK'\\)\")",
+      "PowerShell(Get-NetTCPConnection:*)",
+      "PowerShell(Start-Process -NoNewWindow -FilePath \"D:\\\\MyCode\\\\Github\\\\deepseek-ocr-client\\\\venv\\\\Scripts\\\\python.exe\" -ArgumentList \"backend/ocr_server.py\" -WorkingDirectory \"D:\\\\MyCode\\\\Github\\\\deepseek-ocr-client\"; Start-Sleep 4)",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/config -H \"Content-Type: application/json\" -d '{\"api_url\":\"https://custom.url/v1\",\"api_model\":\"custom-model\"}')",
+      "Bash(curl -s http://127.0.0.1:5000/config)",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/config -H \"Content-Type: application/json\" -d '{\"mode\":\"local\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/config -H \"Content-Type: application/json\" -d '{\"mode\":\"api\"}')"
+    ]
+  }
+}

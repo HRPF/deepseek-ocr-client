@@ -84,6 +84,28 @@
                             </div>
                         </div>
 
+                        <div class="api-settings">
+                            <details id="api-settings-details">
+                                <summary class="api-summary">API Settings</summary>
+                                <div class="api-settings-grid">
+                                    <div class="form-group">
+                                        <label for="api-key">API Key:</label>
+                                        <input type="password" id="api-key" class="api-input" placeholder="sk-..." title="SiliconFlow API Key">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="api-url">API URL:</label>
+                                        <input type="text" id="api-url" class="api-input" placeholder="https://api.siliconflow.cn/v1/chat/completions">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="api-model">Model:</label>
+                                        <input type="text" id="api-model" class="api-input" placeholder="deepseek-ai/DeepSeek-OCR">
+                                    </div>
+                                    <button id="apply-api-config" class="btn btn-small btn-api">Apply</button>
+                                    <button id="toggle-api-mode" class="btn btn-small btn-api-toggle">Local Mode</button>
+                                </div>
+                            </details>
+                        </div>
+
                         <div class="controls-buttons">
                             <button id="ocr-btn" class="btn btn-primary" disabled>
                                 <span id="ocr-btn-text">Run OCR</span>

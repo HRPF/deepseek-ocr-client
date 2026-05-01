@@ -6,6 +6,8 @@ Handles model loading, caching, and OCR inference
 
 import os
 import sys
+import json
+import base64
 import logging
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -14,6 +16,7 @@ from transformers import AutoModel, AutoTokenizer
 import tempfile
 import time
 from threading import Thread, Lock
+import requests as http_requests
 
 # Configure logging
 logging.basicConfig(
@@ -27,9 +30,25 @@ logging.getLogger("werkzeug").setLevel(logging.ERROR)
 app = Flask(__name__)
 CORS(app)
 
+# API mode configuration (must be before get_preferred_device)
+OCR_MODE = os.environ.get("OCR_MODE", "local").lower()
+SILICONFLOW_API_KEY = os.environ.get("SILICONFLOW_API_KEY", "")
+SILICONFLOW_API_URL = os.environ.get(
+    "SILICONFLOW_API_URL",
+    "https://api.siliconflow.cn/v1/chat/completions",
+)
+SILICONFLOW_MODEL = os.environ.get("SILICONFLOW_MODEL", "deepseek-ai/DeepSeek-OCR")
+
+
+def is_api_mode():
+    """Check if API mode is enabled"""
+    return OCR_MODE == "api" and bool(SILICONFLOW_API_KEY)
+
 
 def get_preferred_device():
     """Get the preferred device (GPU if available)"""
+    if is_api_mode():
+        return "api"
     if "DEVICE" in os.environ:
         return os.environ["DEVICE"].lower()
 
@@ -63,6 +82,48 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(SCRIPT_DIR, "..", "cache")
 MODEL_CACHE_DIR = os.path.join(CACHE_DIR, "models")
 OUTPUT_DIR = os.path.join(CACHE_DIR, "outputs")
+
+# API config persistence
+API_CONFIG_PATH = os.path.join(SCRIPT_DIR, "..", "api_config.json")
+
+
+def _load_api_config():
+    """Load persisted API config from file (env vars take priority)"""
+    global OCR_MODE, SILICONFLOW_API_KEY, SILICONFLOW_API_URL, SILICONFLOW_MODEL
+    try:
+        with open(API_CONFIG_PATH, "r") as f:
+            data = json.load(f)
+        if "mode" in data and "OCR_MODE" not in os.environ:
+            OCR_MODE = data["mode"].lower()
+        if "api_key" in data and "SILICONFLOW_API_KEY" not in os.environ:
+            SILICONFLOW_API_KEY = data["api_key"]
+        if "api_url" in data and "SILICONFLOW_API_URL" not in os.environ:
+            SILICONFLOW_API_URL = data["api_url"]
+        if "api_model" in data and "SILICONFLOW_MODEL" not in os.environ:
+            SILICONFLOW_MODEL = data["api_model"]
+        logger.info(f"Loaded API config from {API_CONFIG_PATH}")
+    except FileNotFoundError:
+        pass  # No saved config yet, use defaults
+    except json.JSONDecodeError:
+        logger.warning(f"Invalid API config file: {API_CONFIG_PATH}")
+
+
+def _save_api_config():
+    """Persist current API config to file"""
+    try:
+        data = {
+            "mode": OCR_MODE,
+            "api_key": SILICONFLOW_API_KEY,
+            "api_url": SILICONFLOW_API_URL,
+            "api_model": SILICONFLOW_MODEL,
+        }
+        with open(API_CONFIG_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save API config: {e}")
+
+
+_load_api_config()
 
 # Progress tracking
 progress_data = {
@@ -123,6 +184,14 @@ def get_cache_dir_size(directory):
 def load_model_background():
     """Background thread function to load the model"""
     global model, tokenizer, device, dtype
+
+    # API mode: no model to load
+    if is_api_mode():
+        logger.info(f"API mode enabled - using {SILICONFLOW_MODEL} via {SILICONFLOW_API_URL}")
+        update_progress(
+            "loaded", "api", f"API mode: {SILICONFLOW_MODEL}", 100
+        )
+        return
 
     try:
         update_progress("loading", "init", "Initializing model loading...", 0)
@@ -305,8 +374,9 @@ def health_check():
     return jsonify(
         {
             "status": "ok",
-            "model_loaded": model is not None,
+            "model_loaded": model is not None or is_api_mode(),
             "device_state": get_preferred_device(),
+            "api_mode": is_api_mode(),
         }
     )
 
@@ -329,19 +399,155 @@ def load_model_endpoint():
         return jsonify({"status": "error", "message": "Failed to load model"}), 500
 
 
+@app.route("/config", methods=["GET"])
+def get_config():
+    """Get current API configuration"""
+    return jsonify({
+        "api_mode": is_api_mode(),
+        "api_url": SILICONFLOW_API_URL,
+        "api_model": SILICONFLOW_MODEL,
+    })
+
+
+@app.route("/config", methods=["POST"])
+def set_config():
+    """Update API configuration at runtime"""
+    global SILICONFLOW_API_KEY, SILICONFLOW_API_URL, SILICONFLOW_MODEL, OCR_MODE
+    data = request.json or {}
+    changed = False
+    if "api_key" in data:
+        SILICONFLOW_API_KEY = data["api_key"]
+        changed = True
+    if "api_url" in data:
+        SILICONFLOW_API_URL = data["api_url"]
+        changed = True
+    if "api_model" in data:
+        SILICONFLOW_MODEL = data["api_model"]
+        changed = True
+    if "mode" in data:
+        OCR_MODE = data["mode"].lower()
+        changed = True
+    if changed:
+        logger.info(f"API config updated: mode={OCR_MODE} api_mode={is_api_mode()}")
+        _save_api_config()
+    return jsonify({"status": "success", "api_mode": is_api_mode()})
+
+
+def perform_ocr_api(prompt, image_path, prompt_type):
+    """Perform OCR using SiliconFlow API instead of local model"""
+    # Read and encode image to base64
+    with open(image_path, "rb") as f:
+        image_data = f.read()
+    base64_image = base64.b64encode(image_data).decode("utf-8")
+
+    # Determine MIME type from file extension
+    ext = os.path.splitext(image_path)[1].lower()
+    mime_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".webp": "image/webp",
+    }.get(ext, "image/jpeg")
+
+    data_url = f"data:{mime_type};base64,{base64_image}"
+
+    # Prepare API request (OpenAI-compatible format)
+    headers = {
+        "Authorization": f"Bearer {SILICONFLOW_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": SILICONFLOW_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ],
+        "stream": True,
+        "max_tokens": 4096,
+    }
+
+    logger.info(f"Calling API: {SILICONFLOW_API_URL} model={SILICONFLOW_MODEL}")
+
+    response = http_requests.post(
+        SILICONFLOW_API_URL,
+        json=payload,
+        headers=headers,
+        stream=True,
+        timeout=120,
+    )
+
+    if response.status_code == 401:
+        raise Exception(
+            "Invalid API key. Please check your SILICONFLOW_API_KEY."
+        )
+    elif response.status_code == 429:
+        raise Exception("Rate limited by API. Please try again later.")
+
+    response.raise_for_status()
+
+    # Parse SSE stream and accumulate text
+    accumulated_text = ""
+    for line in response.iter_lines():
+        if not line:
+            continue
+        line = line.decode("utf-8")
+        if line.startswith("data: "):
+            data_str = line[6:]
+            if data_str.strip() == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    accumulated_text += content
+                    update_progress(
+                        "processing",
+                        "ocr",
+                        "Generating OCR...",
+                        50,
+                        len(accumulated_text),
+                        accumulated_text,
+                    )
+            except json.JSONDecodeError:
+                continue
+
+    logger.info(f"API response received: {len(accumulated_text)} chars")
+
+    # Write result to output file (for compatibility with downstream code)
+    expected_output_file = "result.mmd" if prompt_type == "document" else "result.txt"
+    result_filepath = os.path.join(OUTPUT_DIR, expected_output_file)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(result_filepath, "w", encoding="utf-8") as f:
+        f.write(accumulated_text)
+
+    logger.info(f"Result written to: {result_filepath}")
+    return accumulated_text
+
+
 @app.route("/ocr", methods=["POST"])
 def perform_ocr():
     """Perform OCR on uploaded image"""
     global model, tokenizer, device, dtype
 
     try:
-        # Check if model is loaded
-        if model is None or tokenizer is None:
-            logger.info("Model not loaded, loading now...")
-            if not load_model():
-                return jsonify(
-                    {"status": "error", "message": "Failed to load model"}
-                ), 500
+        # In API mode, no local model is needed
+        if not is_api_mode():
+            # Check if model is loaded
+            if model is None or tokenizer is None:
+                logger.info("Model not loaded, loading now...")
+                if not load_model():
+                    return jsonify(
+                        {"status": "error", "message": "Failed to load model"}
+                    ), 500
 
         # Get image from request
         if "image" not in request.files:
@@ -390,6 +596,28 @@ def perform_ocr():
         # Create output directory if it doesn't exist
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+        # === API MODE BRANCH ===
+        if is_api_mode():
+            try:
+                result_text = perform_ocr_api(prompt, temp_image_path, prompt_type)
+            finally:
+                update_progress("idle", "", "", 0, 0)
+
+            # Clean up temporary image file
+            if os.path.exists(temp_image_path):
+                os.remove(temp_image_path)
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "result": result_text,
+                    "boxes_image_path": None,
+                    "prompt_type": prompt_type,
+                    "raw_tokens": result_text,
+                }
+            )
+
+        # === LOCAL MODE ===
         # Perform inference - save results to files with token counting
         logger.info("Running OCR inference...")
         logger.info(f"Saving results to: {OUTPUT_DIR}")
@@ -567,6 +795,17 @@ def perform_ocr():
 @app.route("/model_info", methods=["GET"])
 def model_info():
     """Get information about the model"""
+    if is_api_mode():
+        return jsonify(
+            {
+                "model_name": SILICONFLOW_MODEL,
+                "api_mode": True,
+                "api_url": SILICONFLOW_API_URL,
+                "model_loaded": True,
+                "gpu_available": False,
+                "gpu_name": None,
+            }
+        )
     return jsonify(
         {
             "model_name": MODEL_NAME,
@@ -587,9 +826,19 @@ def serve_output_file(filename):
 
 
 if __name__ == "__main__":
+    # Reload API config from file (in case module-level load was too early)
+    logger.info(f"API config file path: {os.path.abspath(API_CONFIG_PATH)}")
+    _load_api_config()
+    logger.info(f"After config load: OCR_MODE={OCR_MODE}, has_api_key={bool(SILICONFLOW_API_KEY)}, is_api_mode={is_api_mode()}")
+
     # Load model on startup
     logger.info("Starting DeepSeek OCR Server...")
-    logger.info("Model will be automatically downloaded on first use")
+    if is_api_mode():
+        logger.info(
+            f"API mode enabled: model={SILICONFLOW_MODEL} url={SILICONFLOW_API_URL}"
+        )
+    else:
+        logger.info("Local mode: model will be automatically downloaded on first use")
 
     # Suppress Flask's default request logging
     import logging as log

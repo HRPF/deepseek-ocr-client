@@ -74,6 +74,9 @@ window.addEventListener('DOMContentLoaded', () => {
     checkServerStatus();
     setupEventListeners();
     setInterval(checkServerStatus, 5000);
+
+    // Fetch current API config to pre-fill UI fields
+    fetchAPIConfig();
 });
 
 function setupEventListeners() {
@@ -122,6 +125,16 @@ function setupEventListeners() {
     // Load model
     loadModelBtn.addEventListener('click', loadModel);
 
+    // API config
+    const applyBtn = document.getElementById('apply-api-config');
+    if (applyBtn) {
+        applyBtn.addEventListener('click', applyAPIConfig);
+    }
+    const toggleBtn = document.getElementById('toggle-api-mode');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', toggleAPIMode);
+    }
+
     // Copy results
     copyBtn.addEventListener('click', copyResults);
 
@@ -146,10 +159,19 @@ async function checkServerStatus() {
             serverStatus.className = 'status-value success';
 
             const modelLoaded = result.data.model_loaded;
-            modelStatus.textContent = modelLoaded ? 'Loaded' : 'Not loaded';
-            modelStatus.className = `status-value ${modelLoaded ? 'success' : 'warning'}`;
+            const apiMode = result.data.api_mode;
+
+            if (apiMode) {
+                // API mode: no local model, show API info
+                modelStatus.textContent = 'API Mode';
+                modelStatus.className = 'status-value success';
+            } else {
+                modelStatus.textContent = modelLoaded ? 'Loaded' : 'Not loaded';
+                modelStatus.className = `status-value ${modelLoaded ? 'success' : 'warning'}`;
+            }
 
             let deviceState = result.data.device_state;
+            let deviceClass = 'success';
 
             switch (deviceState) {
                 case 'cuda':
@@ -161,14 +183,30 @@ async function checkServerStatus() {
                 case 'cpu':
                     deviceState = 'CPU';
                     break;
+                case 'api':
+                    deviceState = 'API (SiliconFlow)';
+                    break;
+                default:
+                    deviceClass = 'warning';
+                    break;
             }
 
             gpuStatus.textContent = deviceState;
-            gpuStatus.className = `status-value ${deviceState ? 'success' : 'warning'}`;
+            gpuStatus.className = `status-value ${deviceClass}`;
+
+            // Update toggle button text based on current mode
+            const toggleBtn = document.getElementById('toggle-api-mode');
+            if (toggleBtn) {
+                toggleBtn.textContent = apiMode ? 'Local Mode' : 'API Mode';
+            }
 
             // Update load model button state (but don't change if currently processing)
             if (!isProcessing) {
-                if (modelLoaded) {
+                if (apiMode) {
+                    loadModelBtn.disabled = true;
+                    loadModelBtn.textContent = 'API Mode ✓';
+                    loadModelBtn.classList.add('btn-loaded');
+                } else if (modelLoaded) {
                     loadModelBtn.disabled = true;
                     loadModelBtn.textContent = 'Model Loaded ✓';
                     loadModelBtn.classList.add('btn-loaded');
@@ -179,9 +217,9 @@ async function checkServerStatus() {
                 }
             }
 
-            // Update OCR button state - only enable if both image loaded AND model loaded (and not currently processing)
+            // Update OCR button state - enable if image loaded and (model loaded OR API mode)
             if (!isProcessing) {
-                if (currentImagePath && modelLoaded) {
+                if (currentImagePath && (modelLoaded || apiMode)) {
                     ocrBtn.disabled = false;
                 } else {
                     ocrBtn.disabled = true;
@@ -200,6 +238,74 @@ async function checkServerStatus() {
         }
     } catch (error) {
         console.error('Status check error:', error);
+    }
+}
+
+async function fetchAPIConfig() {
+    try {
+        const response = await fetch('http://127.0.0.1:5000/config');
+        const data = await response.json();
+        if (data.api_url && data.api_url !== 'https://api.siliconflow.cn/v1/chat/completions') {
+            document.getElementById('api-url').value = data.api_url;
+        }
+        if (data.api_model && data.api_model !== 'deepseek-ai/DeepSeek-OCR') {
+            document.getElementById('api-model').value = data.api_model;
+        }
+    } catch (e) {
+        // Silently ignore - config fetch is best-effort
+    }
+}
+
+async function applyAPIConfig() {
+    const apiKey = document.getElementById('api-key').value.trim();
+    const apiUrl = document.getElementById('api-url').value.trim();
+    const apiModel = document.getElementById('api-model').value.trim();
+
+    // Only save settings, do NOT change mode
+    const config = {};
+    if (apiKey) config.api_key = apiKey;
+    if (apiUrl) config.api_url = apiUrl;
+    if (apiModel) config.api_model = apiModel;
+
+    if (!apiKey && !apiUrl && !apiModel) {
+        showMessage('No settings to save. Fill in at least one field.', 'info');
+        return;
+    }
+
+    try {
+        const response = await fetch('http://127.0.0.1:5000/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        await response.json();
+        showMessage('API settings saved! Use the toggle button to switch mode.', 'success');
+        await checkServerStatus();
+    } catch (error) {
+        showMessage(`Failed to save settings: ${error.message}`, 'error');
+    }
+}
+
+async function toggleAPIMode() {
+    const healthResp = await fetch('http://127.0.0.1:5000/health');
+    const health = await healthResp.json();
+    const currentlyApiMode = health.api_mode;
+
+    try {
+        const response = await fetch('http://127.0.0.1:5000/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: currentlyApiMode ? 'local' : 'api' })
+        });
+        const result = await response.json();
+        if (result.api_mode) {
+            showMessage('Switched to API mode.', 'success');
+        } else {
+            showMessage('Switched to local mode.', 'success');
+        }
+        await checkServerStatus();
+    } catch (error) {
+        showMessage(`Failed to switch mode: ${error.message}`, 'error');
     }
 }
 
