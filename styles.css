@@ -542,17 +542,14 @@ main {
     position: relative;
     display: inline-block;
     max-width: 100%;
-    max-height: 100%;
     line-height: 0;
 }
 
 .ocr-preview-image {
     display: block;
     max-width: 100%;
-    max-height: calc(100vh - 300px);
     width: auto;
     height: auto;
-    object-fit: contain;
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }

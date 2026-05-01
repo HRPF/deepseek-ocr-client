@@ -559,7 +559,7 @@ function renderBoxes(boxes, imageWidth, imageHeight, promptType) {
     // Set SVG viewBox to match image dimensions (only once)
     if (!ocrBoxesOverlay.hasAttribute('viewBox')) {
         ocrBoxesOverlay.setAttribute('viewBox', `0 0 ${imageWidth} ${imageHeight}`);
-        ocrBoxesOverlay.setAttribute('preserveAspectRatio', 'none');
+        ocrBoxesOverlay.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     }
 
     // OCR Text and Document modes have interactive boxes
