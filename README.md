@@ -4,6 +4,10 @@ A real-time Electron-based desktop GUI for [DeepSeek-OCR](https://github.com/dee
 
 **Unaffiliated with [DeepSeek](https://www.deepseek.com/)**
 
+## About this fork
+
+This fork adds an api_mode branch, which supports using API services provided by remote providers for OCR recognition, along with some UI improvements.
+
 ## Features
 
 - Drag-and-drop image upload
@@ -64,4 +68,3 @@ Please follow Windows instructions but start with `start-client.sh` instead of `
 ## License
 
 MIT
- 
