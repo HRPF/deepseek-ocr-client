@@ -530,8 +530,8 @@ main {
 
 .ocr-preview-wrapper {
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: safe center;
+    justify-content: safe center;
     flex: 1;
     width: 100%;
     min-height: 0;

@@ -377,6 +377,7 @@ def health_check():
             "model_loaded": model is not None or is_api_mode(),
             "device_state": get_preferred_device(),
             "api_mode": is_api_mode(),
+            "api_model": SILICONFLOW_MODEL if is_api_mode() else None,
         }
     )
 

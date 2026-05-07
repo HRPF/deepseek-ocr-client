@@ -163,7 +163,7 @@ async function checkServerStatus() {
 
             if (apiMode) {
                 // API mode: no local model, show API info
-                modelStatus.textContent = 'API Mode';
+                modelStatus.textContent = result.data.api_model || 'API Mode';
                 modelStatus.className = 'status-value success';
             } else {
                 modelStatus.textContent = modelLoaded ? 'Loaded' : 'Not loaded';
@@ -184,7 +184,7 @@ async function checkServerStatus() {
                     deviceState = 'CPU';
                     break;
                 case 'api':
-                    deviceState = 'API (SiliconFlow)';
+                    deviceState = 'API';
                     break;
                 default:
                     deviceClass = 'warning';
